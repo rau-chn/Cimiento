@@ -5,6 +5,8 @@ import { calculateReadingStreak, calculatePrayerStreak, calculateChurchStreak, r
 import { weeklyMetrics, monthlyMetrics, goalProgress } from './metrics.js';
 import { exportBackup, importBackupFile, backupStatus } from './backup.js';
 
+console.log('[Cimiento] build reading-debug-1');
+
 const DEFAULT_CHURCH_SCHEDULE = {
   0: [
     { id: 'sun-1000', time: '10:00', label: 'Culto de la mañana', enabled: true },
@@ -435,13 +437,40 @@ async function handleSubmit(event) {
   const fd = new FormData(form);
 
   if (form.id === 'readingForm') {
-    const verseStart = fd.get('verseStart') ? Number(fd.get('verseStart')) : null;
-    const verseEnd = fd.get('verseEnd') ? Number(fd.get('verseEnd')) : null;
-    if (verseEnd && !verseStart) return toast('Indica primero el versículo inicial.');
-    if (verseEnd && verseStart && verseEnd < verseStart) return toast('El versículo final no puede ser menor que el inicial.');
-    await put('readings', { id: uid('read'), date: fd.get('date'), book: fd.get('book'), chapter: Number(fd.get('chapter')), verseStart, verseEnd, createdAt: new Date().toISOString() });
-    state.selectedDate = String(fd.get('date'));
-    return refresh('Lectura guardada.');
+    try {
+      const verseStart = fd.get('verseStart') ? Number(fd.get('verseStart')) : null;
+      const verseEnd = fd.get('verseEnd') ? Number(fd.get('verseEnd')) : null;
+      if (verseEnd && !verseStart) return toast('Indica primero el versículo inicial.');
+      if (verseEnd && verseStart && verseEnd < verseStart) return toast('El versículo final no puede ser menor que el inicial.');
+
+      console.log('[Cimiento][Reading] environment', {
+        isSecureContext: globalThis.isSecureContext,
+        cryptoExists: !!globalThis.crypto,
+        randomUUID: typeof globalThis.crypto?.randomUUID,
+        getRandomValues: typeof globalThis.crypto?.getRandomValues,
+        uidFallbackLoaded: uid.toString().includes('getRandomValues')
+      });
+      const id = uid('read');
+      console.log('[Cimiento][Reading] uid', id);
+      const reading = { id, date: fd.get('date'), book: fd.get('book'), chapter: Number(fd.get('chapter')), verseStart, verseEnd, createdAt: new Date().toISOString() };
+      await put('readings', reading);
+      const stored = await getOne('readings', id);
+      if (!stored) throw new Error(`La lectura ${id} no aparece en IndexedDB después de put().`);
+      console.log('[Cimiento][Reading] IndexedDB confirmed', stored);
+
+      state.selectedDate = String(reading.date);
+      await refresh('Lectura guardada.');
+      const loaded = state.data.readings.some(item => item.id === id);
+      console.log('[Cimiento][Reading] refreshed', { loaded, selectedDate: state.selectedDate, today: state.today });
+      if (!loaded) throw new Error(`La lectura ${id} existe en IndexedDB, pero no en state.data después de refresh().`);
+      console.log('[Cimiento][Reading] saved', reading);
+    } catch (error) {
+      console.error('[Cimiento][Reading] save failed', error);
+      toast(`No se pudo guardar: ${error?.name ?? 'Error'} — ${error?.message ?? String(error)}`);
+      clearTimeout(toast.timer);
+      toast.timer = setTimeout(() => $('#toast').classList.add('hidden'), 15000);
+    }
+    return;
   }
   if (form.id === 'planForm') {
     const startBook = String(fd.get('startBook')), endBook = String(fd.get('endBook'));
