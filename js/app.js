@@ -24,6 +24,8 @@ const GOAL_LABELS = {
   chapters: 'Capítulos leídos', servicesAttended: 'Cultos asistidos'
 };
 
+const MORE_VIEWS = ['progress', 'study', 'settings'];
+
 const state = {
   today: limaToday(),
   selectedDate: limaToday(),
@@ -50,10 +52,22 @@ function toast(message) {
   toast.timer = setTimeout(() => el.classList.add('hidden'), 2200);
 }
 
+function closeMoreMenu() {
+  $('#moreMenu').hidden = true;
+  $('#moreButton').setAttribute('aria-expanded', 'false');
+}
+
 function navigate(view) {
+  closeMoreMenu();
   state.activeView = view;
   $$('.view').forEach(el => el.classList.toggle('active', el.dataset.view === view));
-  $$('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.nav === view));
+  $$('[data-nav]').forEach(el => {
+    const active = el.dataset.nav === view;
+    el.classList.toggle('active', active);
+    if (active) el.setAttribute('aria-current', 'page');
+    else el.removeAttribute('aria-current');
+  });
+  $('#moreButton').classList.toggle('active', MORE_VIEWS.includes(view));
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -164,7 +178,7 @@ function renderReading() {
   const plans = state.data.plans;
   const recent = [...state.data.readings].sort((a,b) => b.date.localeCompare(a.date) || (b.createdAt ?? '').localeCompare(a.createdAt ?? '')).slice(0, 20);
   $('#view-reading').innerHTML = `
-    <div class="page-head"><div><h2>Lectura</h2><p>Registro estructurado. Biblia protestante de 66 libros · ${TOTAL_BIBLE_CHAPTERS.toLocaleString('es-PE')} capítulos.</p></div></div>
+    <div class="page-head"><div><h2>Lectura</h2><p>Registro estructurado. Biblia protestante de 66 libros · ${TOTAL_BIBLE_CHAPTERS.toLocaleString('es-PE').replace(',', '.')} capítulos.</p></div></div>
     <form id="readingForm" class="card">
       <div class="form-grid four">
         <label>Fecha<input type="date" name="date" value="${state.selectedDate}" max="${state.today}" required></label>
@@ -682,7 +696,19 @@ async function init() {
   document.addEventListener('click', handleClick);
   document.addEventListener('change', handleChange);
   document.addEventListener('input', handleInput);
-  $$('.nav-item').forEach(button => button.addEventListener('click', () => navigate(button.dataset.nav)));
+  $$('[data-nav]').forEach(button => button.addEventListener('click', () => navigate(button.dataset.nav)));
+  $('#moreButton').addEventListener('click', () => {
+    const menu = $('#moreMenu');
+    menu.hidden = !menu.hidden;
+    $('#moreButton').setAttribute('aria-expanded', String(!menu.hidden));
+  });
+  document.addEventListener('click', event => {
+    if (!event.target.closest('#moreMenu, #moreButton')) closeMoreMenu();
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') closeMoreMenu();
+  });
+  window.addEventListener('resize', closeMoreMenu);
 }
 
 init().catch(err => {

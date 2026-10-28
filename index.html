@@ -32,6 +32,11 @@
     <section id="view-settings" class="view" data-view="settings"></section>
   </main>
 
+  <div id="moreMenu" class="more-menu" aria-label="Más secciones" hidden>
+    <button type="button" data-nav="progress">Progreso</button>
+    <button type="button" data-nav="study">Estudio personal</button>
+    <button type="button" data-nav="settings">Ajustes</button>
+  </div>
   <nav class="bottom-nav" aria-label="Navegación principal">
     <button class="nav-item active" data-nav="home">Hoy</button>
     <button class="nav-item" data-nav="reading">Lectura</button>
@@ -40,6 +45,7 @@
     <button class="nav-item" data-nav="progress">Progreso</button>
     <button class="nav-item" data-nav="study">Estudio</button>
     <button class="nav-item" data-nav="settings">Ajustes</button>
+    <button id="moreButton" class="nav-item nav-more" type="button" aria-controls="moreMenu" aria-expanded="false">Más</button>
   </nav>
 
   <script type="module" src="./js/app.js"></script>
