@@ -1,6 +1,6 @@
 import { openDb, getAll, getOne, put, remove, uid } from './db.js';
 import { BIBLE_BOOKS, TOTAL_BIBLE_CHAPTERS, getBook, bookProgress, planProgress } from './bible.js';
-import { limaToday, formatDateEs, startOfWeekMonday, isSunday, monthBounds, eachDate, dayOfWeek } from './dates.js';
+import { limaToday, formatDateEs, startOfWeekMonday, isSunday, monthBounds, eachDate, dayOfWeek, minutesBetweenEpoch } from './dates.js';
 import { calculateReadingStreak, calculatePrayerStreak, calculateChurchStreak, readingDayComplete, prayerDayComplete, scheduledServicesForDate, attendedAllScheduledServices } from './streaks.js';
 import { weeklyMetrics, monthlyMetrics, goalProgress } from './metrics.js';
 import { exportBackup, importBackupFile, backupStatus } from './backup.js';
@@ -30,6 +30,8 @@ const state = {
   activeView: 'home',
   deferredInstallPrompt: null,
   timerInterval: null,
+  prayerRecoveryAcknowledged: false, // true una vez que el usuario resuelve el banner de recuperación
+  prayerActionPending: false,
   data: null
 };
 
@@ -202,22 +204,59 @@ function activePrayerSession() {
   return state.data.prayerSessions.find(s => s.completed === false) ?? null;
 }
 
+/** Genera el HTML del banner de recuperación cuando hay una sesión abierta al arrancar. */
+function renderPrayerRecoveryBanner(active) {
+  const startedStr = new Date(active.startedAt).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+  const startedDate = formatDateEs(active.date, { weekday: true });
+  const elapsedMin = Math.max(0, Math.floor((Date.now() - active.startEpochMs) / 60000));
+  return `
+    <div class="card" style="border-left:4px solid var(--accent);margin-bottom:12px" role="alert">
+      <h3 style="margin-top:0">Sesión de oración abierta</h3>
+      <p>Iniciada el <strong>${startedDate}</strong> a las <strong>${startedStr}</strong>.<br>
+         Tiempo transcurrido: <strong id="recoveryTimer">${elapsedMin} min</strong>.</p>
+      <p class="small muted">Elige qué hacer con esta sesión:</p>
+      <div class="button-row">
+        <button class="button" data-action="recover-continue" data-id="${active.id}">Continuar</button>
+        <button class="button secondary" data-action="recover-finish" data-id="${active.id}">Finalizar ahora</button>
+        <button class="button danger" data-action="recover-discard" data-id="${active.id}">Descartar</button>
+      </div>
+    </div>`;
+}
+
 function renderPrayer() {
   const active = activePrayerSession();
   const sessions = [...state.data.prayerSessions].filter(s => s.completed).sort((a,b) => (b.endedAt ?? '').localeCompare(a.endedAt ?? '')).slice(0,20);
   const requests = [...state.data.prayerRequests].sort((a,b) => b.date.localeCompare(a.date));
+
+  // El banner de recuperación se muestra solo la primera vez (flag false).
+  // Tras cualquier acción de recuperación el flag queda true y se pasa a la vista normal.
+  const showRecoveryBanner = active && !state.prayerRecoveryAcknowledged;
+  const deepBlock = showRecoveryBanner
+    ? renderPrayerRecoveryBanner(active)
+    : active
+    ? `<div class="card">
+        <h3>Modo profundo</h3>
+        <p class="muted">Sesión en curso desde ${new Date(active.startedAt).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'})}.</p>
+        <div id="prayerTimer" class="timer">0 min</div>
+        <label>Nota opcional<textarea id="prayerTimerNote" maxlength="800">${esc(active.note ?? '')}</textarea></label>
+        <div class="form-actions"><button class="button" data-action="stop-prayer-timer" data-id="${active.id}">Finalizar sesión</button></div>
+        <p class="timer-note">Se guardan minutos completos; los segundos no se contabilizan.</p>
+       </div>`
+    : `<div class="card">
+        <h3>Modo profundo</h3>
+        <p class="muted">El cronómetro guarda la hora real de inicio. Si bloqueas el teléfono, no se desfasa.</p>
+        <button class="button" data-action="start-prayer-timer">Iniciar oración</button>
+        <p class="timer-note">Se guardan minutos completos; los segundos no se contabilizan.</p>
+       </div>`;
+
   $('#view-prayer').innerHTML = `
     <div class="page-head"><div><h2>Oración</h2><p>Modo rápido para cumplir el día; modo profundo para registrar minutos.</p></div></div>
+    ${deepBlock}
     <div class="grid two">
       <div class="card">
         <h3>Modo rápido</h3><p>Marca el día sin registrar duración.</p>
         <label>Fecha<input id="prayerQuickDate" type="date" value="${state.selectedDate}" max="${state.today}"></label>
         <div class="button-row" style="margin-top:10px"><button class="button" data-action="prayer-quick-yes-page">Sí, oré</button><button class="button secondary" data-action="prayer-quick-no-page">No</button></div>
-      </div>
-      <div class="card">
-        <h3>Modo profundo</h3>
-        ${active ? `<p class="muted">Sesión iniciada ${new Date(active.startedAt).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'})}.</p><div id="prayerTimer" class="timer">0 min</div><label>Nota opcional<textarea id="prayerTimerNote" maxlength="800">${esc(active.note ?? '')}</textarea></label><div class="form-actions"><button class="button" data-action="stop-prayer-timer" data-id="${active.id}">Finalizar sesión</button></div>` : `<p class="muted">El cronómetro guarda la hora real de inicio. Si bloqueas el teléfono, no se desfasa.</p><button class="button" data-action="start-prayer-timer">Iniciar oración</button>`}
-        <p class="timer-note">Se guardan minutos completos; los segundos no se contabilizan.</p>
       </div>
     </div>
 
@@ -238,7 +277,7 @@ function startTimerUi(active) {
   if (state.timerInterval) clearInterval(state.timerInterval);
   if (!active) return;
   const update = () => {
-    const el = $('#prayerTimer');
+    const el = $('#prayerTimer') ?? $('#recoveryTimer');
     if (el) el.textContent = `${Math.max(0, Math.floor((Date.now() - active.startEpochMs) / 60000))} min`;
   };
   update();
@@ -474,18 +513,46 @@ async function handleClick(event) {
     else await saveAttendance(state.selectedDate, serviceId, action === 'service-attended' ? 'attended' : 'missed');
     return refresh('Registro de culto actualizado.');
   }
-  if (action === 'start-prayer-timer') {
-    const now = Date.now();
-    await put('prayerSessions', { id: uid('session'), date: limaToday(new Date(now)), startEpochMs: now, startedAt: new Date(now).toISOString(), completed: false, minutes: 0, note: '' });
-    return refresh('Cronómetro iniciado.');
-  }
-  if (action === 'stop-prayer-timer') {
-    const session = state.data.prayerSessions.find(s => s.id === button.dataset.id);
-    if (!session) return;
-    const end = Date.now();
-    const minutes = Math.max(0, Math.floor((end - session.startEpochMs) / 60000));
-    await put('prayerSessions', { ...session, completed: true, endedAt: new Date(end).toISOString(), minutes, note: $('#prayerTimerNote')?.value.trim() ?? '' });
-    return refresh(`Sesión guardada: ${minutes} min.`);
+  if (['recover-continue', 'recover-finish', 'recover-discard', 'start-prayer-timer', 'stop-prayer-timer'].includes(action)) {
+    if (state.prayerActionPending) return;
+    state.prayerActionPending = true;
+    try {
+      if (action === 'recover-continue') {
+        // La sesión sigue abierta con el startEpochMs original.
+        state.prayerRecoveryAcknowledged = true;
+        return await refresh('Sesión retomada.');
+      }
+      if (action === 'recover-finish') {
+        const session = state.data.prayerSessions.find(s => s.id === button.dataset.id);
+        if (!session || session.completed) return;
+        state.prayerRecoveryAcknowledged = true;
+        const end = Date.now();
+        const minutes = minutesBetweenEpoch(session.startEpochMs, end);
+        await put('prayerSessions', { ...session, completed: true, endedAt: new Date(end).toISOString(), minutes, note: '' });
+        return await refresh(`Sesión finalizada: ${minutes} min.`);
+      }
+      if (action === 'recover-discard') {
+        const session = state.data.prayerSessions.find(s => s.id === button.dataset.id);
+        if (!session || session.completed) return;
+        state.prayerRecoveryAcknowledged = true;
+        await remove('prayerSessions', session.id);
+        return await refresh('Sesión descartada.');
+      }
+      if (action === 'start-prayer-timer') {
+        if (activePrayerSession()) return toast('Ya hay una sesión de oración abierta. Resuélvela primero.');
+        const now = Date.now();
+        await put('prayerSessions', { id: uid('session'), date: limaToday(new Date(now)), startEpochMs: now, startedAt: new Date(now).toISOString(), completed: false, minutes: 0, note: '' });
+        return await refresh('Cronómetro iniciado.');
+      }
+      const session = state.data.prayerSessions.find(s => s.id === button.dataset.id);
+      if (!session || session.completed) return;
+      const end = Date.now();
+      const minutes = minutesBetweenEpoch(session.startEpochMs, end);
+      await put('prayerSessions', { ...session, completed: true, endedAt: new Date(end).toISOString(), minutes, note: $('#prayerTimerNote')?.value.trim() ?? '' });
+      return await refresh(`Sesión guardada: ${minutes} min.`);
+    } finally {
+      state.prayerActionPending = false;
+    }
   }
   if (action === 'answer-request') {
     const req = state.data.prayerRequests.find(r => r.id === button.dataset.id);
