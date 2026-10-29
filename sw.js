@@ -1,8 +1,8 @@
-const CACHE_NAME = 'cimiento-v1';
+const CACHE_NAME = 'cimiento-v2';
 const APP_SHELL = [
   './', './index.html', './styles.css', './manifest.webmanifest',
   './js/app.js', './js/db.js', './js/dates.js', './js/bible.js', './js/streaks.js', './js/metrics.js', './js/backup.js',
-  './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png'
+  './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/favicon-32.png'
 ];
 
 self.addEventListener('install', event => {
